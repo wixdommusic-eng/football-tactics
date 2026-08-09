@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Football Tactics Simulator</title>
+  <style>
+    body { font-family: sans-serif; background: #121212; color: #fff; padding: 20px; text-align: center; }
+    .pitch { max-width: 500px; margin: 20px auto; background: #2e7d32; padding: 20px; border-radius: 8px; border: 2px solid #fff; }
+    .player-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; }
+    .player-name { font-weight: bold; font-size: 16px; }
+    select { padding: 6px; border-radius: 4px; border: none; background: #fff; font-weight: bold; }
+    button { width: 100%; padding: 15px; background: #ff9800; color: #000; border: none; font-size: 18px; font-weight: bold; cursor: pointer; border-radius: 5px; margin-top: 15px; }
+    button:hover { background: #e68a00; }
+    #result-screen { display: none; font-size: 24px; font-weight: bold; padding: 20px; background: #1e1e1e; border-radius: 8px; max-width: 500px; margin: 20px auto; }
+  </style>
+</head>
+<body>
+
+  <h1>Tactical Simulator</h1>
+  
+  <select id="team-select" style="font-size: 18px; padding: 10px; margin-bottom: 20px;">
+    <option value="">-- Choose Your Team --</option>
+  </select>
+
+  <div class="pitch" id="team-container" style="display:none;">
+    <!-- Players inject here -->
+  </div>
+  <button id="ready-btn" style="display:none; max-width: 540px; margin: 0 auto;">Lock In Tactics</button>
+
+  <div id="result-screen"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let teamsData = {};
+
+    // 1. Receive teams from server and populate the dropdown
+    socket.on('loadTeams', (teams) => {
+      teamsData = teams;
+      const select = document.getElementById('team-select');
+      for (const teamName in teams) {
+        const option = document.createElement('option');
+        option.value = teamName;
+        option.innerText = teamName;
+        select.appendChild(option);
+      }
+    });
+
+    // 2. When a team is chosen, build the pitch UI with player names
+    document.getElementById('team-select').addEventListener('change', (e) => {
+      const selectedTeam = e.target.value;
+      if (!selectedTeam) return;
+
+      const container = document.getElementById('team-container');
+      container.innerHTML = ''; 
+      container.style.display = 'block';
+      document.getElementById('ready-btn').style.display = 'block';
+
+      const players = teamsData[selectedTeam];
+      players.forEach(player => {
+        const div = document.createElement('div');
+        div.className = 'player-row';
+        div.innerHTML = `
+          <span class="player-name">${player}</span>
+          <select class="tactic-select">
+            <option value="Neutral">Neutral Base</option>
+            <option value="Aggressive">Aggressive Attack</option>
+            <option value="Marking">Mark Player</option>
+            <option value="Link">Link Play</option>
+          </select>
+        `;
+        container.appendChild(div);
+      });
+    });
+
+    // 3. Lock in tactics and send to server
+    document.getElementById('ready-btn').addEventListener('click', () => {
+      const selects = document.querySelectorAll('.tactic-select');
+      const tactics = Array.from(selects).map(select => select.value);
+      
+      socket.emit('tacticsLocked', tactics);
+      
+      document.getElementById('ready-btn').innerText = "Waiting for Opponent...";
+      document.getElementById('ready-btn').disabled = true;
+    });
+
+    // 4. Show the final simulation result
+    socket.on('matchResult', (result) => {
+      document.getElementById('team-container').style.display = 'none';
+      document.getElementById('ready-btn').style.display = 'none';
+      document.getElementById('team-select').style.display = 'none';
+      
+      const resultScreen = document.getElementById('result-screen');
+      resultScreen.style.display = 'block';
+      
+      if (result.scoreA > result.scoreB) {
+        resultScreen.innerHTML = `Match Finished!<br><br>Player 1 won the tactical battle.<br>Score: ${result.scoreA} to ${result.scoreB}`;
+      } else if (result.scoreB > result.scoreA) {
+        resultScreen.innerHTML = `Match Finished!<br><br>Player 2 won the tactical battle.<br>Score: ${result.scoreB} to ${result.scoreA}`;
+      } else {
+        resultScreen.innerHTML = `Match Finished!<br><br>It's a tactical deadlock.<br>Draw: ${result.scoreA} - ${result.scoreB}`;
+      }
+    });
+  </script>
+</body>
+</html>
