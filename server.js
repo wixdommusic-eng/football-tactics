@@ -1,4 +1,11 @@
-// 1. Updated Data Structure (Added Foot & X/Y Coords)
+const express = require('express');
+const app = express();
+const http = require('http').Server(app);
+const io = require('socket.io')(http);
+
+app.use(express.static('public'));
+
+// Data Structure with Foot & X/Y Coords for visual mapping
 const teams = {
   "Madrid": [
     { name: "Courtois", pos: "GK", rating: 90, x: 50, y: 95 },
@@ -14,11 +21,11 @@ const teams = {
   ]
 };
 
-// 2. Updated Match Engine
+// Match Engine Handling Shooters, GK Logic, and Visual Logs
 function simulateMatch(teamA, tacticsA, nameA, teamB, tacticsB, nameB, shooterA, shooterB) {
   let scoreA = 0; let scoreB = 0;
   let matchLog = [];
-  let visualEvents = []; // Stores line coordinates for the frontend
+  let visualEvents = []; 
 
   let possession = 'A'; 
   const totalPossessions = 15; 
@@ -29,9 +36,13 @@ function simulateMatch(teamA, tacticsA, nameA, teamB, tacticsB, nameB, shooterA,
     if (zone === 2) return isAttacking ? [8,9,10] : [1,2,3,4]; 
   };
 
+  matchLog.push("KICK OFF!");
+
   for (let turn = 0; turn < totalPossessions; turn++) {
     let connections = 0; let currentZone = 0; 
     let lastPlayer = null;
+    let currentAttackingTeam = possession === 'A' ? nameA : nameB;
+    matchLog.push(`\n▶ ${currentAttackingTeam} starts possession...`);
 
     while (connections < 5) {
       const attIndices = getZoneIndices(currentZone, true);
@@ -44,16 +55,26 @@ function simulateMatch(teamA, tacticsA, nameA, teamB, tacticsB, nameB, shooterA,
       const attPlayer = possession === 'A' ? teamA[attIdx] : teamB[attIdx];
       const defPlayer = possession === 'A' ? teamB[defIdx] : teamA[defIdx];
 
-      let passSuccess = (attTactic === 'Aggressive' && defTactic === 'Neutral') || (attTactic === 'Link' && defTactic === 'Marking') || (attTactic === defTactic && (attPlayer.rating + (attPlayer.h2h_edge||0) >= defPlayer.rating + (defPlayer.h2h_edge||0)));
+      // Logic check for pass success
+      let passSuccess = false;
+      if (attTactic === 'Aggressive' && defTactic === 'Neutral') passSuccess = true;
+      else if (attTactic === 'Link' && defTactic === 'Marking') passSuccess = true;
+      else if (attTactic === defTactic) {
+          const attScore = attPlayer.rating + (attPlayer.h2h_edge || 0);
+          const defScore = defPlayer.rating + (defPlayer.h2h_edge || 0);
+          passSuccess = attScore >= defScore;
+      }
+      
+      // Auto fail for aggressive vs marking
       if (attTactic === 'Aggressive' && defTactic === 'Marking') passSuccess = false;
 
-      // Visual line tracking
+      // Track line coordinates for the frontend visual pitch
       if (lastPlayer) {
         visualEvents.push({
           type: passSuccess ? 'success' : 'break',
           x1: lastPlayer.x, y1: possession === 'A' ? lastPlayer.y : 100 - lastPlayer.y,
           x2: attPlayer.x, y2: possession === 'A' ? attPlayer.y : 100 - attPlayer.y,
-          color: possession === 'A' ? '#00ff00' : '#0088ff' // Green vs Blue
+          color: possession === 'A' ? '#00ff00' : '#0088ff' 
         });
       }
       lastPlayer = attPlayer;
@@ -64,13 +85,13 @@ function simulateMatch(teamA, tacticsA, nameA, teamB, tacticsB, nameB, shooterA,
         matchLog.push(`✔️ ${attPlayer.name} connects... (${connections}/5)`);
         
         if (connections >= 5) {
-          // SHOOTER MECHANIC
+          // Trigger the shot mechanic
           const shooterName = possession === 'A' ? shooterA : shooterB;
           const attackingTeam = possession === 'A' ? teamA : teamB;
           const defendingTactics = possession === 'A' ? tacticsB : tacticsA;
           
           const shooterObj = attackingTeam.find(p => p.name === shooterName) || attPlayer;
-          const gkFocus = defendingTactics[0].replace('Focus ', ''); // GK is always index 0
+          const gkFocus = defendingTactics[0].replace('Focus ', ''); 
           const shotSide = shooterObj.foot === 'L' ? 'Left' : 'Right';
 
           if (shotSide === gkFocus) {
@@ -90,3 +111,34 @@ function simulateMatch(teamA, tacticsA, nameA, teamB, tacticsB, nameB, shooterA,
   }
   return { scoreA, scoreB, nameA, nameB, matchLog, visualEvents, teamA, teamB };
 }
+
+let p1 = null; 
+let p2 = null;
+
+io.on('connection', (socket) => {
+  const teamNames = Object.keys(teams).reduce((acc, key) => {
+    acc[key] = teams[key].map(p => p.name);
+    return acc;
+  }, {});
+  
+  socket.emit('loadTeams', teamNames);
+
+  socket.on('tacticsLocked', (data) => {
+    if (!p1) {
+      p1 = data;
+    } else {
+      p2 = data;
+      // Send both tactical arrays and shooter selections into the simulator
+      const result = simulateMatch(
+        teams[p1.teamName], p1.tactics, p1.teamName,
+        teams[p2.teamName], p2.tactics, p2.teamName,
+        p1.shooter, p2.shooter
+      );
+      io.emit('matchResult', result);
+      p1 = null; p2 = null;
+    }
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
