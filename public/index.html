@@ -8,11 +8,18 @@
     body { font-family: sans-serif; background: #121212; color: #fff; padding: 20px; text-align: center; }
     .pitch { max-width: 500px; margin: 20px auto; background: #2e7d32; padding: 20px; border-radius: 8px; border: 2px solid #fff; }
     .player-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; }
-    .player-name { font-weight: bold; font-size: 16px; }
+    .player-name { font-weight: bold; font-size: 16px; display: flex; align-items: center; gap: 10px;}
     select { padding: 6px; border-radius: 4px; border: none; background: #fff; font-weight: bold; }
     button { width: 100%; padding: 15px; background: #ff9800; color: #000; border: none; font-size: 18px; font-weight: bold; cursor: pointer; border-radius: 5px; margin-top: 15px; }
     button:hover { background: #e68a00; }
-    #result-screen { display: none; font-size: 24px; font-weight: bold; padding: 20px; background: #1e1e1e; border-radius: 8px; max-width: 500px; margin: 20px auto; }
+    #commentary-box { display:none; text-align:left; background:#000; padding:20px; border-radius:8px; height: 350px; overflow-y:auto; font-family:monospace; margin: 20px auto; max-width: 500px; border: 2px solid #333; }
+    
+    .pitch-2d { position: relative; width: 100%; max-width: 500px; height: 350px; background: #1b5e20; border: 2px solid white; margin: 20px auto; overflow: hidden; display: none; }
+    .dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%); animation: blink 1s infinite; z-index: 2; }
+    .dot.green { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
+    .dot.blue { background: #0088ff; box-shadow: 0 0 5px #0088ff; }
+    @keyframes blink { 50% { opacity: 0.3; } }
+    svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; overflow: visible; }
   </style>
 </head>
 <body>
@@ -26,16 +33,21 @@
   <div class="pitch" id="team-container" style="display:none;">
     <!-- Players inject here -->
   </div>
+  
   <button id="ready-btn" style="display:none; max-width: 540px; margin: 0 auto;">Lock In Tactics</button>
 
-  <div id="result-screen"></div>
+  <div class="pitch-2d" id="visual-pitch">
+    <svg id="pass-lines"></svg>
+    <div id="dots-container"></div>
+  </div>
+  
+  <div id="commentary-box"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
     let teamsData = {};
 
-    // 1. Receive teams from server and populate the dropdown
     socket.on('loadTeams', (teams) => {
       teamsData = teams;
       const select = document.getElementById('team-select');
@@ -47,7 +59,6 @@
       }
     });
 
-    // 2. When a team is chosen, build the pitch UI with player names
     document.getElementById('team-select').addEventListener('change', (e) => {
       const selectedTeam = e.target.value;
       if (!selectedTeam) return;
@@ -57,50 +68,122 @@
       container.style.display = 'block';
       document.getElementById('ready-btn').style.display = 'block';
 
-      const players = teamsData[selectedTeam];
-      players.forEach(player => {
+      teamsData[selectedTeam].forEach((player, i) => {
         const div = document.createElement('div');
         div.className = 'player-row';
-        div.innerHTML = `
-          <span class="player-name">${player}</span>
-          <select class="tactic-select">
-            <option value="Neutral">Neutral Base</option>
-            <option value="Aggressive">Aggressive Attack</option>
-            <option value="Marking">Mark Player</option>
-            <option value="Link">Link Play</option>
-          </select>
-        `;
+        
+        // Goalkeeper interface vs Outfield interface
+        if (i === 0) {
+          div.innerHTML = `
+            <span class="player-name">${player} (GK)</span>
+            <select class="tactic-select">
+              <option value="Focus Left">Focus Left</option>
+              <option value="Focus Right">Focus Right</option>
+            </select>
+          `;
+        } else {
+          div.innerHTML = `
+            <span class="player-name">
+              <input type="radio" name="shooter" value="${player}" ${i===10 ? 'checked' : ''}> 
+              ${player}
+            </span>
+            <select class="tactic-select">
+              <option value="Neutral">Neutral Base</option>
+              <option value="Aggressive">Aggressive</option>
+              <option value="Marking">Marking</option>
+              <option value="Link">Link Play</option>
+            </select>
+          `;
+        }
         container.appendChild(div);
       });
     });
 
-    // 3. Lock in tactics and send to server
     document.getElementById('ready-btn').addEventListener('click', () => {
       const selects = document.querySelectorAll('.tactic-select');
       const tactics = Array.from(selects).map(select => select.value);
+      const shooter = document.querySelector('input[name="shooter"]:checked').value;
       
-      socket.emit('tacticsLocked', tactics);
+      socket.emit('tacticsLocked', { 
+        teamName: document.getElementById('team-select').value, 
+        tactics: tactics,
+        shooter: shooter
+      });
       
       document.getElementById('ready-btn').innerText = "Waiting for Opponent...";
       document.getElementById('ready-btn').disabled = true;
     });
 
-    // 4. Show the final simulation result
     socket.on('matchResult', (result) => {
+      // Hide selection UI, show match UI
       document.getElementById('team-container').style.display = 'none';
       document.getElementById('ready-btn').style.display = 'none';
       document.getElementById('team-select').style.display = 'none';
       
-      const resultScreen = document.getElementById('result-screen');
-      resultScreen.style.display = 'block';
+      document.getElementById('visual-pitch').style.display = 'block';
+      const commBox = document.getElementById('commentary-box');
+      commBox.style.display = 'block';
+      commBox.innerHTML = ''; 
       
-      if (result.scoreA > result.scoreB) {
-        resultScreen.innerHTML = `Match Finished!<br><br>Player 1 won the tactical battle.<br>Score: ${result.scoreA} to ${result.scoreB}`;
-      } else if (result.scoreB > result.scoreA) {
-        resultScreen.innerHTML = `Match Finished!<br><br>Player 2 won the tactical battle.<br>Score: ${result.scoreB} to ${result.scoreA}`;
-      } else {
-        resultScreen.innerHTML = `Match Finished!<br><br>It's a tactical deadlock.<br>Draw: ${result.scoreA} - ${result.scoreB}`;
-      }
+      const dots = document.getElementById('dots-container');
+      const svg = document.getElementById('pass-lines');
+      dots.innerHTML = ''; svg.innerHTML = '';
+
+      // Set up the static glowing dots based on coordinates
+      result.teamA.forEach(p => { dots.innerHTML += `<div class="dot green" style="left:${p.x}%; top:${p.y}%"></div>`; });
+      result.teamB.forEach(p => { dots.innerHTML += `<div class="dot blue" style="left:${p.x}%; top:${100-p.y}%"></div>`; });
+
+      let i = 0;
+      
+      // Loop the commentary and drawing logic
+      const simInterval = setInterval(() => {
+        if (i < result.matchLog.length) {
+          const logText = result.matchLog[i];
+          const p = document.createElement('div');
+          p.innerText = logText;
+          p.style.marginBottom = "8px";
+          
+          if(logText.includes("⚽ GOAL!!!")) {
+            p.style.color = "#4caf50";
+            p.style.fontWeight = "bold";
+            p.style.fontSize = "18px";
+          } else if (logText.includes("🧤 CHANCE CANCELLED!")) {
+            p.style.color = "#ff5722";
+            p.style.fontWeight = "bold";
+          }
+          
+          commBox.appendChild(p);
+          commBox.scrollTop = commBox.scrollHeight; 
+          
+          // Draw connecting SVG lines on the visual pitch
+          if (result.visualEvents[i]) {
+            const ev = result.visualEvents[i];
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', `${ev.x1}%`); line.setAttribute('y1', `${ev.y1}%`);
+            line.setAttribute('x2', `${ev.x2}%`); line.setAttribute('y2', `${ev.y2}%`);
+            line.setAttribute('stroke', ev.color);
+            line.setAttribute('stroke-width', '2');
+            if (ev.type === 'break') line.setAttribute('stroke-dasharray', '4'); 
+            svg.appendChild(line);
+          }
+          i++;
+        } else {
+          clearInterval(simInterval);
+          
+          // Print Final Score
+          const finalScore = document.createElement('div');
+          finalScore.style.textAlign = 'center';
+          finalScore.style.marginTop = '20px';
+          finalScore.style.fontSize = '24px';
+          finalScore.style.fontWeight = 'bold';
+          finalScore.style.color = '#ff9800';
+          
+          finalScore.innerHTML = `FULL TIME<br><br>${result.nameA} ${result.scoreA} - ${result.scoreB} ${result.nameB}`;
+          
+          commBox.appendChild(finalScore);
+          commBox.scrollTop = commBox.scrollHeight;
+        }
+      }, 600); 
     });
   </script>
 </body>
