@@ -13,7 +13,7 @@ async function translateTactics(prompt) {
   if (!prompt || prompt.trim() === "") return Array(10).fill("Center");
   try {
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemini-1.5-flash",
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
